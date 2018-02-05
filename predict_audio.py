@@ -76,8 +76,8 @@ if __name__ == '__main__':
         x = x[np.newaxis, ...]  # add sample dimension
     else:
         df = pd.read_pickle(args.df).head(5)
-        read_in_wav = partial(read_in_wav, model=model, scaler=scaler)
-        x = parallel_process(df.dbPath.values, read_in_wav)
+        read_in_wav_partial = partial(read_in_wav, model=model, scaler=scaler)
+        x = parallel_process(df.dbPath.values, read_in_wav_partial)
 
     y = model.predict(x, verbose=0)  # predict output
     logging.info("Speaker Count Estimate: %s", np.argmax(y, axis=1))
