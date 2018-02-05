@@ -1,9 +1,10 @@
 # IDEA找不到，其实能跑(在项目属性页中配置好sys.path后才能识别，直接add to sources root 时好时坏不一定生效)
+import pickle
+
 from parallel_util import parallel_process
 
 import logging
 import argparse
-from functools import partial
 
 import numpy as np
 import pandas as pd
@@ -36,7 +37,8 @@ def load_scaler(scaler_params_path):
 
 
 # noinspection PyShadowingNames
-def read_in_wav(wav_path, model, scaler):
+def read_in_wav(wav_path):
+    # , model, scaler = args
     # compute audio
     audio, rate = sf.read(wav_path, always_2d=True)
     audio = pad_sequences([audio], maxlen=80000, dtype=np.float64, padding='post')[0]
@@ -46,6 +48,11 @@ def read_in_wav(wav_path, model, scaler):
     audio /= np.max(audio, axis=0)
     # compute STFT
     x = np.abs(librosa.stft(audio, n_fft=400, hop_length=160)).T
+    return x
+
+
+# noinspection PyShadowingNames
+def transform_wav(x, model, scaler):
     # apply standardization
     x = scaler.transform(x)
     # cut to input shape length (500 frames x 201 STFT bins)
@@ -53,7 +60,6 @@ def read_in_wav(wav_path, model, scaler):
     # apply normalization
     theta = np.linalg.norm(x, axis=1) + eps
     x /= np.mean(theta)
-
     return x
 
 
@@ -65,6 +71,7 @@ if __name__ == '__main__':
     parser.add_argument('-l', '--log_level', default='INFO')
 
     args = parser.parse_args()
+    # args.df = None
 
     logging.basicConfig(level=args.log_level)
 
@@ -72,12 +79,17 @@ if __name__ == '__main__':
     model = load_model('models/RNN_keras2.h5')
 
     if args.df is None:
-        x = read_in_wav(args.audio, model, scaler)
-        x = x[np.newaxis, ...]  # add sample dimension
+        x = read_in_wav(args.audio)
+        x = transform_wav(x, model, scaler)
+        xs = x[np.newaxis, ...]  # add sample dimension
     else:
-        df = pd.read_pickle(args.df).head(5)
-        read_in_wav_partial = partial(read_in_wav, model=model, scaler=scaler)
-        x = parallel_process(df.dbPath.values, read_in_wav_partial)
+        df = pd.read_pickle(args.df).head(2)
+        xs = parallel_process(df.dbPath.values, read_in_wav)
+        xs = np.stack(xs)
+        xs = np.stack((transform_wav(x, model=model, scaler=scaler) for x in xs))
 
-    y = model.predict(x, verbose=0)  # predict output
-    logging.info("Speaker Count Estimate: %s", np.argmax(y, axis=1))
+    ys = model.predict(xs, verbose=0)  # predict output
+    logging.info("Speaker Count Estimate (head 10): %s", np.argmax(ys[:10], axis=1))
+
+    with open('./res/speaker_count_estimation.pkl', 'wb+') as f:
+        pickle.dump(ys, f)
